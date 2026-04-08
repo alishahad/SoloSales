@@ -1,7 +1,35 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Check } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { fetchApi } from '../api';
+import { useState } from 'react';
+import toast from 'react-hot-toast';
 
 export default function PricingPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  const handleUpgrade = async () => {
+    if (!user) {
+      navigate('/signup');
+      return;
+    }
+    setCheckoutLoading(true);
+    try {
+      const response = await fetchApi('/api/checkout', { method: 'POST' });
+      if (response.url) {
+        window.location.href = response.url;
+      } else {
+        throw new Error('No checkout URL returned');
+      }
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      toast.error('Failed to initiate checkout: ' + (error.message || 'Unknown error'));
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
   return (
     <div className="bg-white py-24 sm:py-32">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -56,12 +84,13 @@ export default function PricingPage() {
               <span className="text-4xl font-bold tracking-tight text-gray-900">$29</span>
               <span className="text-sm font-semibold leading-6 text-gray-600">/month</span>
             </p>
-            <Link
-              to="/signup"
-              className="mt-6 block rounded-md bg-indigo-600 py-2 px-3 text-center text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            <button
+              onClick={handleUpgrade}
+              disabled={checkoutLoading}
+              className="mt-6 block w-full rounded-md bg-indigo-600 py-2 px-3 text-center text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50"
             >
-              Get started
-            </Link>
+              {checkoutLoading ? 'Processing...' : (user ? 'Upgrade to Pro' : 'Get started')}
+            </button>
             <ul role="list" className="mt-8 space-y-3 text-sm leading-6 text-gray-600">
               <li className="flex gap-x-3">
                 <Check className="h-6 w-5 flex-none text-indigo-600" aria-hidden="true" />

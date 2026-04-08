@@ -19,8 +19,18 @@ export default function Navbar() {
         <div className="flex justify-between h-16">
           <div className="flex">
             <Link to={user ? "/dashboard" : "/"} className="flex-shrink-0 flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-xl leading-none">S</span>
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden bg-indigo-600">
+                <img 
+                  src="/logo.png" 
+                  alt="Logo" 
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const span = e.currentTarget.nextElementSibling as HTMLElement;
+                    if (span) span.style.display = 'block';
+                  }}
+                />
+                <span className="text-white font-bold text-xl leading-none hidden">S</span>
               </div>
               <span className="font-bold text-xl text-gray-900 tracking-tight">SoloSales.OS</span>
             </Link>

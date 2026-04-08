@@ -6,14 +6,44 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
 import { GoogleGenAI } from '@google/genai';
+import Stripe from 'stripe';
 import db, { initDb } from './db.ts';
 
 const app = express();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-prod';
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder', { apiVersion: '2023-10-16' as any });
 
 // Initialize DB
 initDb();
+
+// Stripe Webhook (must be before express.json())
+app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_placeholder';
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig as string, endpointSecret);
+  } catch (err: any) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const userId = session.client_reference_id;
+    if (userId) {
+      db.prepare('UPDATE users SET plan = ?, stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?')
+        .run('pro', session.customer as string, session.subscription as string, userId);
+    }
+  } else if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object as Stripe.Subscription;
+    db.prepare('UPDATE users SET plan = ? WHERE stripe_subscription_id = ?')
+      .run('free', subscription.id);
+  }
+
+  res.json({ received: true });
+});
 
 // Middleware
 app.use(express.json());
@@ -44,10 +74,16 @@ app.post('/api/auth/signup', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = db.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)').run(email, hashedPassword);
     
+    // Admin access for founder
+    if (email === 'aakhan023@gmail.com') {
+      db.prepare('UPDATE users SET is_admin = 1, plan = ? WHERE id = ?').run('pro', result.lastInsertRowid);
+    }
+
     const token = jwt.sign({ id: result.lastInsertRowid, email }, JWT_SECRET, { expiresIn: '24h' });
     
+    const user = db.prepare('SELECT id, email, onboarding_completed, is_admin, plan FROM users WHERE id = ?').get(result.lastInsertRowid);
     res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
-    res.json({ user: { id: result.lastInsertRowid, email, onboarding_completed: 0 } });
+    res.json({ user });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -63,10 +99,17 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Admin access for founder (retroactive)
+    if (email === 'aakhan023@gmail.com' && !user.is_admin) {
+      db.prepare('UPDATE users SET is_admin = 1, plan = ? WHERE id = ?').run('pro', user.id);
+      user.is_admin = 1;
+      user.plan = 'pro';
+    }
+
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
     
     res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
-    res.json({ user: { id: user.id, email: user.email, onboarding_completed: user.onboarding_completed } });
+    res.json({ user: { id: user.id, email: user.email, onboarding_completed: user.onboarding_completed, is_admin: user.is_admin, plan: user.plan } });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -79,9 +122,33 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', authenticateToken, (req: any, res) => {
-  const user = db.prepare('SELECT id, email, onboarding_completed FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, email, onboarding_completed, is_admin, plan FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.sendStatus(404);
   res.json({ user });
+});
+
+app.post('/api/checkout', authenticateToken, async (req: any, res) => {
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'SoloSales.OS Pro' },
+          unit_amount: 2900,
+          recurring: { interval: 'month' }
+        },
+        quantity: 1,
+      }],
+      mode: 'subscription',
+      success_url: `${req.headers.origin}/settings?success=true`,
+      cancel_url: `${req.headers.origin}/settings?canceled=true`,
+      client_reference_id: req.user.id.toString(),
+    });
+    res.json({ url: session.url });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/auth/password', authenticateToken, async (req: any, res) => {
@@ -212,77 +279,31 @@ app.put('/api/projects/:id/assets/:assetId', authenticateToken, (req: any, res) 
 
 // --- Generation Route ---
 
-app.post('/api/projects/:id/generate', authenticateToken, async (req: any, res) => {
+app.post('/api/projects/:id/assets', authenticateToken, (req: any, res) => {
   const projectId = req.params.id;
-  const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, req.user.id) as any;
+  const generatedAssets = req.body;
+  const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, req.user.id);
   
   if (!project) return res.status(404).json({ error: 'Project not found' });
 
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const insertAsset = db.prepare('INSERT INTO assets (project_id, type, content) VALUES (?, ?, ?)');
+  
+  const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM assets WHERE project_id = ?').run(projectId);
     
-    const prompt = `
-      Act as a world-class outbound sales strategist. Generate a complete outbound sales system for the following company:
-      
-      Industry: ${project.industry}
-      Target Customer: ${project.target_customer}
-      Deal Size: ${project.deal_size}
-      Geography: ${project.geography}
-      Target Roles: ${project.target_roles}
-      Sales Motion: ${project.sales_motion}
-      Current Stage: ${project.current_stage}
-      Biggest Blocking Problem: ${project.blocking_problem}
-
-      Please generate the following 5 assets in a structured JSON format:
-      1. "icp": A detailed Ideal Customer Profile summary (1-2 personas).
-      2. "email_sequence": 3 outbound email sequences (4 emails each).
-      3. "linkedin_dm": 5 LinkedIn DM scripts for connection and follow-up.
-      4. "discovery_script": A discovery call script with structure and key questions.
-      5. "objection_handling": A cheatsheet for 5 common objections with responses.
-
-      Return ONLY valid JSON with keys: "icp", "email_sequence", "linkedin_dm", "discovery_script", "objection_handling".
-      The values should be formatted as Markdown strings.
-    `;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
-      }
-    });
-
-    const text = response.text;
-    if (!text) throw new Error("No response from Gemini");
+    insertAsset.run(projectId, 'icp', generatedAssets.icp);
+    insertAsset.run(projectId, 'email_sequence', generatedAssets.email_sequence);
+    insertAsset.run(projectId, 'linkedin_dm', generatedAssets.linkedin_dm);
+    insertAsset.run(projectId, 'discovery_script', generatedAssets.discovery_script);
+    insertAsset.run(projectId, 'objection_handling', generatedAssets.objection_handling);
     
-    const generatedAssets = JSON.parse(text);
+    db.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+  });
+  
+  transaction();
 
-    // Save to DB
-    const insertAsset = db.prepare('INSERT INTO assets (project_id, type, content) VALUES (?, ?, ?)');
-    
-    const transaction = db.transaction(() => {
-      // Clear existing assets for this project to avoid duplicates on re-generation
-      db.prepare('DELETE FROM assets WHERE project_id = ?').run(projectId);
-      
-      insertAsset.run(projectId, 'icp', generatedAssets.icp);
-      insertAsset.run(projectId, 'email_sequence', generatedAssets.email_sequence);
-      insertAsset.run(projectId, 'linkedin_dm', generatedAssets.linkedin_dm);
-      insertAsset.run(projectId, 'discovery_script', generatedAssets.discovery_script);
-      insertAsset.run(projectId, 'objection_handling', generatedAssets.objection_handling);
-      
-      // Update project updated_at
-      db.prepare('UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
-    });
-    
-    transaction();
-
-    const assets = db.prepare('SELECT * FROM assets WHERE project_id = ?').all(projectId);
-    res.json(assets);
-
-  } catch (error) {
-    console.error('Gemini API Error:', error);
-    res.status(500).json({ error: 'Failed to generate assets' });
-  }
+  const assets = db.prepare('SELECT * FROM assets WHERE project_id = ?').all(projectId);
+  res.json(assets);
 });
 
 // --- Lead Routes ---
@@ -329,36 +350,31 @@ app.delete('/api/projects/:id/leads/:leadId', authenticateToken, (req: any, res)
 });
 
 
+app.get('/api/check-env', (req, res) => {
+  res.json({ 
+    keySet: !!process.env.GEMINI_API_KEY,
+    keyLength: process.env.GEMINI_API_KEY?.length,
+    keyPrefix: process.env.GEMINI_API_KEY?.substring(0, 5)
+  });
+});
+
 app.post('/api/generate-logo', async (req, res) => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            text: 'A clean, modern, professional logo for a B2B SaaS application called SoloSales.OS. The logo should feature a stylized "S" or a target/growth chart motif, using a color palette of deep indigo and vibrant purple. Minimalist, flat vector style, white background.',
-          },
-        ],
-      },
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const base64EncodeString = part.inlineData.data;
-        const buffer = Buffer.from(base64EncodeString, 'base64');
-        const publicDir = path.join(process.cwd(), 'public');
-        if (!fs.existsSync(publicDir)) {
-          fs.mkdirSync(publicDir);
-        }
-        fs.writeFileSync(path.join(publicDir, 'logo.png'), buffer);
-        return res.json({ success: true, message: 'Logo generated and saved to public/logo.png' });
-      }
+    const { base64Image } = req.body;
+    if (!base64Image) return res.status(400).json({ error: 'No image data provided' });
+    
+    const buffer = Buffer.from(base64Image, 'base64');
+    const publicDir = path.join(process.cwd(), 'public');
+    
+    if (!fs.existsSync(publicDir)) {
+      fs.mkdirSync(publicDir);
     }
-    res.status(500).json({ error: 'No image data returned' });
+    
+    fs.writeFileSync(path.join(publicDir, 'logo.png'), buffer);
+    return res.json({ success: true, message: 'Logo saved to public/logo.png' });
   } catch (error: any) {
-    console.error('Failed to generate logo:', error);
-    res.status(500).json({ error: 'Failed to generate logo', details: error.message });
+    console.error('Failed to save logo:', error);
+    res.status(500).json({ error: 'Failed to save logo', details: error.message });
   }
 });
 

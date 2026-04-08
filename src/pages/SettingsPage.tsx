@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { fetchApi } from '../api';
 import toast from 'react-hot-toast';
@@ -7,8 +7,41 @@ import toast from 'react-hot-toast';
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [loading, setLoading] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('profile');
+
+  useEffect(() => {
+    const query = new URLSearchParams(location.search);
+    if (query.get('success')) {
+      toast.success('Subscription successful! You are now on the Pro plan.');
+      // Remove query param
+      navigate('/settings', { replace: true });
+    }
+    if (query.get('canceled')) {
+      toast.error('Subscription checkout was canceled.');
+      navigate('/settings', { replace: true });
+    }
+  }, [location, navigate]);
+
+  const handleUpgrade = async () => {
+    setCheckoutLoading(true);
+    try {
+      const response = await fetchApi('/api/checkout', { method: 'POST' });
+      if (response.url) {
+        window.location.href = response.url;
+      } else {
+        throw new Error('No checkout URL returned');
+      }
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      toast.error('Failed to initiate checkout: ' + (error.message || 'Unknown error'));
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,89 +92,234 @@ export default function SettingsPage() {
     }
   };
 
-  return (
-    <div className="max-w-3xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
-      <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-8">Account Settings</h1>
+  const [generatingLogo, setGeneratingLogo] = useState(false);
 
-      <div className="bg-white shadow sm:rounded-lg mb-8">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">Profile Information</h3>
-          <div className="mt-2 max-w-xl text-sm text-gray-500">
-            <p>Your email address is used for login and notifications.</p>
-          </div>
-          <div className="mt-5">
-            <div className="rounded-md bg-gray-50 px-6 py-5 sm:flex sm:items-start sm:justify-between">
-              <div className="sm:flex sm:items-start">
-                <div className="mt-3 sm:mt-0 sm:ml-4">
-                  <div className="text-sm font-medium text-gray-900">{user?.email}</div>
-                  <div className="mt-1 text-sm text-gray-600">Account ID: {user?.id}</div>
+  const handleGenerateLogo = async () => {
+    setGeneratingLogo(true);
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      // @ts-ignore
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || 'placeholder' });
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            { text: 'A clean, modern, professional logo for a B2B SaaS application called SoloSales.OS. The logo should feature a stylized "S" or a target/growth chart motif, using a color palette of deep indigo and vibrant purple. Minimalist, flat vector style, white background.' }
+          ]
+        }
+      });
+
+      let base64Image = null;
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+          base64Image = part.inlineData.data;
+          break;
+        }
+      }
+
+      if (!base64Image) throw new Error('No image generated');
+
+      await fetchApi('/api/generate-logo', {
+        method: 'POST',
+        body: JSON.stringify({ base64Image })
+      });
+
+      toast.success('Logo generated and saved successfully! Refresh to see changes.');
+    } catch (error: any) {
+      console.error('Failed to generate logo:', error);
+      toast.error('Failed to generate logo: ' + error.message);
+    } finally {
+      setGeneratingLogo(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+      {/* Page Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-headline font-bold text-white tracking-tight">Settings</h1>
+        <p className="text-on-surface-variant mt-1">Manage your account, billing, and integrations.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+        {/* Settings Navigation */}
+        <div className="md:col-span-3">
+          <nav className="flex flex-col gap-2">
+            <button 
+              onClick={() => setActiveTab('profile')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-colors text-left ${activeTab === 'profile' ? 'bg-primary-container/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container hover:text-white'}`}
+            >
+              Profile
+            </button>
+            <button 
+              onClick={() => setActiveTab('billing')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-colors text-left ${activeTab === 'billing' ? 'bg-primary-container/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container hover:text-white'}`}
+            >
+              Billing
+            </button>
+            <button 
+              onClick={() => setActiveTab('security')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-colors text-left ${activeTab === 'security' ? 'bg-primary-container/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container hover:text-white'}`}
+            >
+              Security
+            </button>
+            <button 
+              onClick={() => setActiveTab('app')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-colors text-left ${activeTab === 'app' ? 'bg-primary-container/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container hover:text-white'}`}
+            >
+              App Settings
+            </button>
+          </nav>
+        </div>
+
+        {/* Settings Content */}
+        <div className="md:col-span-9 space-y-8">
+          {activeTab === 'profile' && (
+            <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div className="px-6 py-5 border-b border-outline-variant/10">
+                <h2 className="text-lg font-headline font-bold text-white">Profile Settings</h2>
+                <p className="text-sm text-on-surface-variant mt-1">Update your personal information and email.</p>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="flex items-center gap-6">
+                  <div className="w-20 h-20 rounded-full bg-primary-container flex items-center justify-center text-on-primary font-headline font-bold text-2xl">
+                    {user?.email?.charAt(0).toUpperCase()}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-on-surface-variant mb-2">Email Address</label>
+                    <input type="email" value={user?.email || ''} readOnly className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all opacity-70 cursor-not-allowed"/>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
+            </section>
+          )}
 
-      <div className="bg-white shadow sm:rounded-lg mb-8">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">Change Password</h3>
-          <form className="mt-5 space-y-4" onSubmit={handlePasswordChange}>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Current Password</label>
-              <input
-                type="password"
-                required
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                value={passwords.currentPassword}
-                onChange={(e) => setPasswords({ ...passwords, currentPassword: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">New Password</label>
-              <input
-                type="password"
-                required
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                value={passwords.newPassword}
-                onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Confirm New Password</label>
-              <input
-                type="password"
-                required
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                value={passwords.confirmPassword}
-                onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:text-sm disabled:opacity-50"
-            >
-              {loading ? 'Updating...' : 'Update Password'}
-            </button>
-          </form>
-        </div>
-      </div>
+          {activeTab === 'billing' && (
+            <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div className="px-6 py-5 border-b border-outline-variant/10">
+                <h2 className="text-lg font-headline font-bold text-white">Billing & Subscription</h2>
+                <p className="text-sm text-on-surface-variant mt-1">Manage your subscription plan and billing details.</p>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="bg-surface-container rounded-md p-4 border border-outline-variant/30 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-white font-medium mb-1">Current Plan: <span className="uppercase text-primary">{user?.plan || 'free'}</span></h3>
+                    <p className="text-sm text-on-surface-variant">
+                      {user?.plan === 'pro' 
+                        ? 'You have access to all premium features.' 
+                        : 'Upgrade to Pro to unlock unlimited projects, AI generation, and premium support.'}
+                    </p>
+                  </div>
+                  {user?.plan !== 'pro' && (
+                    <button
+                      onClick={handleUpgrade}
+                      disabled={checkoutLoading}
+                      className="px-6 py-2 rounded-md bg-gradient-to-br from-primary to-primary-container text-on-primary font-bold text-sm hover:brightness-110 transition-all disabled:opacity-50"
+                    >
+                      {checkoutLoading ? 'Processing...' : 'Upgrade to Pro'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
 
-      <div className="bg-white shadow sm:rounded-lg">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">Delete Account</h3>
-          <div className="mt-2 max-w-xl text-sm text-gray-500">
-            <p>Once you delete your account, you will lose all data associated with it. This action cannot be undone.</p>
-          </div>
-          <div className="mt-5">
-            <button
-              type="button"
-              onClick={handleDeleteAccount}
-              className="inline-flex items-center justify-center rounded-md border border-transparent bg-red-100 px-4 py-2 font-medium text-red-700 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 sm:text-sm"
-            >
-              Delete account
-            </button>
-          </div>
+          {activeTab === 'security' && (
+            <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div className="px-6 py-5 border-b border-outline-variant/10">
+                <h2 className="text-lg font-headline font-bold text-white">Security</h2>
+                <p className="text-sm text-on-surface-variant mt-1">Update your password and secure your account.</p>
+              </div>
+              <div className="p-6">
+                <form className="space-y-4" onSubmit={handlePasswordChange}>
+                  <div>
+                    <label className="block text-sm font-medium text-on-surface-variant mb-2">Current Password</label>
+                    <input
+                      type="password"
+                      required
+                      className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+                      value={passwords.currentPassword}
+                      onChange={(e) => setPasswords({ ...passwords, currentPassword: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-on-surface-variant mb-2">New Password</label>
+                    <input
+                      type="password"
+                      required
+                      className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+                      value={passwords.newPassword}
+                      onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-on-surface-variant mb-2">Confirm New Password</label>
+                    <input
+                      type="password"
+                      required
+                      className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+                      value={passwords.confirmPassword}
+                      onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })}
+                    />
+                  </div>
+                  <div className="pt-4 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="px-6 py-2 rounded-md bg-primary text-on-primary font-bold text-sm hover:brightness-110 transition-all disabled:opacity-50"
+                    >
+                      {loading ? 'Updating...' : 'Update Password'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'app' && (
+            <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div className="px-6 py-5 border-b border-outline-variant/10">
+                <h2 className="text-lg font-headline font-bold text-white">Application Settings</h2>
+                <p className="text-sm text-on-surface-variant mt-1">Configure global application behavior.</p>
+              </div>
+              <div className="p-6 space-y-6">
+                <div>
+                  <h3 className="text-white font-medium mb-2">Generate App Logo</h3>
+                  <p className="text-sm text-on-surface-variant mb-4">Use AI to generate a new logo for your application. This will update the logo shown in the navigation bar.</p>
+                  <button
+                    type="button"
+                    onClick={handleGenerateLogo}
+                    disabled={generatingLogo}
+                    className="px-4 py-2 rounded-md bg-surface-container border border-outline-variant/30 text-white font-medium text-sm hover:bg-surface-container-high transition-all disabled:opacity-50"
+                  >
+                    {generatingLogo ? 'Generating...' : 'Generate New Logo'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Danger Zone - Always visible at the bottom */}
+          <section className="bg-surface-container-low rounded-xl border border-error/30 overflow-hidden mt-8">
+            <div className="px-6 py-5 border-b border-error/20">
+              <h2 className="text-lg font-headline font-bold text-error">Danger Zone</h2>
+            </div>
+            <div className="p-6 flex items-center justify-between">
+              <div>
+                <h3 className="text-white font-medium mb-1">Delete Account</h3>
+                <p className="text-sm text-on-surface-variant">Permanently delete your account and all data.</p>
+              </div>
+              <button 
+                onClick={handleDeleteAccount}
+                className="px-4 py-2 rounded-md bg-error/10 text-error border border-error/20 font-medium text-sm hover:bg-error hover:text-on-error transition-all"
+              >
+                Delete Account
+              </button>
+            </div>
+          </section>
         </div>
       </div>
     </div>

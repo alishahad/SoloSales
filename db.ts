@@ -52,6 +52,12 @@ export function initDb() {
       FOREIGN KEY(project_id) REFERENCES projects(id)
     );
   `);
+
+  // Add new columns if they don't exist
+  try { db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"); } catch (e) {}
 }
 
 export default db;

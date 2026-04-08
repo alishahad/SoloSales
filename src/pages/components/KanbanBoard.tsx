@@ -21,7 +21,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { fetchApi } from '../../api';
-import { Plus, MoreHorizontal, Trash, DollarSign, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const COLUMNS = ['To Contact', 'Contacted', 'Discovery Call', 'Proposal Sent', 'Won', 'Lost'];
@@ -61,38 +60,39 @@ function SortableItem({ lead, onDelete }: { lead: Lead; onDelete: (id: number) =
       style={style}
       {...attributes}
       {...listeners}
-      className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-3 cursor-grab active:cursor-grabbing group relative hover:border-indigo-300 transition-colors"
+      className="bg-surface-container-low p-4 rounded-lg border border-outline-variant/20 hover:border-primary/50 transition-all cursor-grab active:cursor-grabbing group mb-3 relative"
     >
-      <div className="font-semibold text-gray-900">{lead.company_name}</div>
-      <div className="text-sm text-gray-600 mt-1">{lead.contact_name} {lead.role ? `• ${lead.role}` : ''}</div>
+      <div className="flex justify-between items-start mb-2">
+        <h4 className="font-bold text-white text-sm">{lead.company_name}</h4>
+        <button
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent drag start
+            onDelete(lead.id);
+          }}
+          className="text-outline hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Delete lead"
+        >
+          <span className="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+        </button>
+      </div>
+      <p className="text-xs text-on-surface-variant mb-3">{lead.contact_name} {lead.role ? `• ${lead.role}` : ''}</p>
       
       {(lead.email || lead.value) && (
-        <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1">
+        <div className="flex items-center gap-4 text-xs">
           {lead.email && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <Mail className="h-3 w-3" />
-              <span className="truncate">{lead.email}</span>
+            <div className="flex items-center gap-1 text-on-surface-variant">
+              <span className="material-symbols-outlined text-[14px]" data-icon="mail">mail</span>
+              <span className="truncate max-w-[120px]">{lead.email}</span>
             </div>
           )}
           {lead.value && (
-            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
-              <DollarSign className="h-3 w-3" />
+            <div className="flex items-center gap-1 text-tertiary font-medium">
+              <span className="material-symbols-outlined text-[14px]" data-icon="payments">payments</span>
               <span>{lead.value}</span>
             </div>
           )}
         </div>
       )}
-      
-      <button
-        onClick={(e) => {
-          e.stopPropagation(); // Prevent drag start
-          if (confirm('Delete lead?')) onDelete(lead.id);
-        }}
-        className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md opacity-0 group-hover:opacity-100 transition-all"
-        title="Delete lead"
-      >
-        <Trash className="h-4 w-4" />
-      </button>
     </div>
   );
 }
@@ -101,14 +101,14 @@ function DroppableColumn({ id, leads, onDelete }: { id: string; leads: Lead[]; o
   const { setNodeRef } = useDroppable({ id });
 
   return (
-    <div ref={setNodeRef} className="bg-gray-50/80 p-4 rounded-xl min-w-[280px] w-[280px] flex-shrink-0 border border-gray-200/60 flex flex-col h-[calc(100vh-16rem)]">
-      <div className="flex items-center justify-between mb-4 px-1">
-        <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wider">{id}</h3>
-        <span className="bg-gray-200 text-gray-600 py-0.5 px-2 rounded-full text-xs font-medium">
+    <div ref={setNodeRef} className="bg-surface-container-lowest border border-outline-variant/10 rounded-xl w-[320px] flex flex-col h-full flex-shrink-0">
+      <div className="p-4 border-b border-outline-variant/10 flex justify-between items-center shrink-0">
+        <h3 className="font-bold text-sm text-white uppercase tracking-wider">{id}</h3>
+        <span className="bg-surface-container text-on-surface-variant py-0.5 px-2 rounded-full text-xs font-medium border border-outline-variant/20">
           {leads.length}
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar">
+      <div className="p-4 flex-1 overflow-y-auto custom-scrollbar flex flex-col">
         <SortableContext items={leads.map((l) => l.id.toString())} strategy={verticalListSortingStrategy}>
           <div className="min-h-[100px] h-full">
             {leads.map((lead) => (
@@ -126,6 +126,11 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [newLead, setNewLead] = useState({ company_name: '', contact_name: '', role: '', email: '', value: '', notes: '' });
+  const [leadToDelete, setLeadToDelete] = useState<number | null>(null);
+  
+  // Filtering state
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -143,6 +148,42 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
       setLeads(project.leads);
     }
   }, [project]);
+
+  const filteredLeads = leads.filter(lead => {
+    const matchesCompany = lead.company_name.toLowerCase().includes(filterCompany.toLowerCase());
+    const matchesStatus = filterStatus ? lead.status === filterStatus : true;
+    return matchesCompany && matchesStatus;
+  });
+
+  const handleExportCSV = () => {
+    if (leads.length === 0) {
+      toast.error('No leads to export');
+      return;
+    }
+
+    const headers = ['Company Name', 'Contact Name', 'Role', 'Email', 'Value', 'Status', 'Notes'];
+    const csvContent = [
+      headers.join(','),
+      ...leads.map(lead => [
+        `"${lead.company_name.replace(/"/g, '""')}"`,
+        `"${lead.contact_name.replace(/"/g, '""')}"`,
+        `"${lead.role?.replace(/"/g, '""') || ''}"`,
+        `"${lead.email?.replace(/"/g, '""') || ''}"`,
+        `"${lead.value?.replace(/"/g, '""') || ''}"`,
+        `"${lead.status}"`,
+        `"${lead.notes?.replace(/"/g, '""') || ''}"`
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `leads_${project.name.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string);
@@ -217,7 +258,10 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
     }
   };
 
-  const handleDeleteLead = async (id: number) => {
+  const handleDeleteLead = async () => {
+    if (leadToDelete === null) return;
+    const id = leadToDelete;
+    
     try {
       await fetchApi(`/api/leads/${id}`, { method: 'DELETE' });
       setLeads(leads.filter((l) => l.id !== id));
@@ -225,92 +269,127 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
     } catch (error: any) {
       console.error('Failed to delete lead', error);
       toast.error('Failed to delete lead: ' + error.message);
+    } finally {
+      setLeadToDelete(null);
     }
   };
 
+  const confirmDelete = (id: number) => {
+    setLeadToDelete(id);
+  };
+
   return (
-    <div className="h-full flex flex-col">
-      <div className="mb-6 flex justify-between items-center shrink-0">
+    <div className="h-[calc(100vh-16rem)] flex flex-col">
+      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Pipeline</h2>
-          <p className="text-sm text-gray-500 mt-1">Track your outbound deals</p>
+          <h2 className="text-xl font-headline font-bold text-white">Pipeline</h2>
+          <p className="text-sm text-on-surface-variant mt-1">Track your outbound deals</p>
         </div>
-        <button
-          onClick={() => setIsAdding(true)}
-          className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition-colors shadow-sm text-sm font-medium"
-        >
-          <Plus className="h-4 w-4" />
-          Add Lead
-        </button>
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-64">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]" data-icon="search">search</span>
+            <input
+              type="text"
+              placeholder="Filter by company..."
+              value={filterCompany}
+              onChange={(e) => setFilterCompany(e.target.value)}
+              className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md pl-10 pr-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline text-sm"
+            />
+          </div>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all text-sm appearance-none"
+          >
+            <option value="">All Statuses</option>
+            {COLUMNS.map(col => (
+              <option key={col} value={col}>{col}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-4 py-2 rounded-md bg-surface-container border border-outline-variant/30 text-white font-medium text-sm hover:bg-surface-container-high transition-all"
+          >
+            <span className="material-symbols-outlined text-[18px]" data-icon="download">download</span>
+            Export CSV
+          </button>
+          <button
+            onClick={() => setIsAdding(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-on-primary font-bold text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/20"
+          >
+            <span className="material-symbols-outlined text-[18px]" data-icon="add">add</span>
+            Add Lead
+          </button>
+        </div>
       </div>
 
       {isAdding && (
-        <div className="mb-8 bg-white p-6 rounded-xl border border-gray-200 shadow-sm shrink-0">
+        <div className="mb-6 bg-surface-container-low p-6 rounded-xl border border-outline-variant/10 shrink-0">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium text-gray-900">Add New Lead</h3>
-            <button onClick={() => setIsAdding(false)} className="text-gray-400 hover:text-gray-500">
-              <Trash className="h-5 w-5" />
+            <h3 className="text-lg font-bold text-white">Add New Lead</h3>
+            <button onClick={() => setIsAdding(false)} className="text-outline hover:text-white transition-colors">
+              <span className="material-symbols-outlined" data-icon="close">close</span>
             </button>
           </div>
-          <form onSubmit={handleAddLead} className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700">Company Name *</label>
+          <form onSubmit={handleAddLead} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">Company Name *</label>
               <input
                 type="text"
                 required
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline"
                 value={newLead.company_name}
                 onChange={(e) => setNewLead({ ...newLead, company_name: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700">Contact Name</label>
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">Contact Name</label>
               <input
                 type="text"
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline"
                 value={newLead.contact_name}
                 onChange={(e) => setNewLead({ ...newLead, contact_name: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700">Role</label>
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">Role</label>
               <input
                 type="text"
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline"
                 value={newLead.role}
                 onChange={(e) => setNewLead({ ...newLead, role: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-3">
-              <label className="block text-sm font-medium text-gray-700">Email</label>
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">Email</label>
               <input
                 type="email"
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline"
                 value={newLead.email}
                 onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-3">
-              <label className="block text-sm font-medium text-gray-700">Deal Value</label>
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">Deal Value</label>
               <input
                 type="text"
                 placeholder="e.g. $10,000"
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                className="w-full bg-surface-container border border-outline-variant/30 text-white rounded-md px-4 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all placeholder:text-outline"
                 value={newLead.value}
                 onChange={(e) => setNewLead({ ...newLead, value: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-6 flex justify-end gap-3 mt-2">
+            <div className="md:col-span-2 flex justify-end gap-3 mt-2">
               <button
                 type="button"
                 onClick={() => setIsAdding(false)}
-                className="bg-white text-gray-700 border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-colors"
+                className="px-6 py-2 rounded-md bg-surface-container border border-outline-variant/30 text-white font-medium text-sm hover:bg-surface-container-high transition-all"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 text-sm font-medium shadow-sm transition-colors"
+                className="px-6 py-2 rounded-md bg-primary text-on-primary font-bold text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/20"
               >
                 Save Lead
               </button>
@@ -319,27 +398,27 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex-1 overflow-x-auto custom-scrollbar pb-4">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <div className="flex gap-6 overflow-x-auto pb-4 flex-1 items-start">
+          <div className="flex gap-6 min-w-max h-full">
             {COLUMNS.map((columnId) => (
               <DroppableColumn
                 key={columnId}
                 id={columnId}
-                leads={leads.filter((l) => l.status === columnId)}
-                onDelete={handleDeleteLead}
+                leads={filteredLeads.filter((l) => l.status === columnId)}
+                onDelete={confirmDelete}
               />
             ))}
           </div>
           <DragOverlay>
             {activeId ? (
-              <div className="bg-white p-4 rounded-xl shadow-xl border border-indigo-300 opacity-90 rotate-3 cursor-grabbing w-[280px]">
-                <div className="font-semibold text-gray-900">
+              <div className="bg-surface-container-low p-4 rounded-lg border border-primary shadow-xl opacity-90 rotate-3 cursor-grabbing w-[280px]">
+                <div className="font-bold text-white text-sm">
                   {leads.find(l => l.id.toString() === activeId)?.company_name || 'Dragging...'}
                 </div>
               </div>
@@ -347,6 +426,32 @@ export default function KanbanBoard({ project }: KanbanBoardProps) {
           </DragOverlay>
         </DndContext>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {leadToDelete !== null && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-lg font-bold text-white mb-2">Delete Lead</h3>
+            <p className="text-sm text-on-surface-variant mb-6">
+              Are you sure you want to delete this lead? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setLeadToDelete(null)}
+                className="px-4 py-2 text-sm font-medium text-white bg-surface-container border border-outline-variant/30 rounded-md hover:bg-surface-container-high transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteLead}
+                className="px-4 py-2 text-sm font-bold text-white bg-error rounded-md hover:brightness-110 transition-all shadow-lg shadow-error/20"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

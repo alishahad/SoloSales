@@ -4,8 +4,9 @@ import { fetchApi } from '../api';
 import Questionnaire from './components/Questionnaire';
 import AssetsView from './components/AssetsView';
 import KanbanBoard from './components/KanbanBoard';
-import { ArrowLeft, Settings, FileText, LayoutDashboard } from 'lucide-react';
 import toast from 'react-hot-toast';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 export default function ProjectPage() {
   const { id } = useParams();
@@ -41,69 +42,120 @@ export default function ProjectPage() {
     setActiveTab('assets');
   };
 
+  const handleExport = async () => {
+    if (!project) return;
+    try {
+      const zip = new JSZip();
+      
+      // 1. Summary Markdown
+      let summary = `# Project: ${project.name}\n\n`;
+      summary += `**Industry:** ${project.industry || 'N/A'}\n`;
+      summary += `**Target Customer:** ${project.target_customer || 'N/A'}\n`;
+      summary += `**Deal Size:** ${project.deal_size || 'N/A'}\n`;
+      summary += `**Geography:** ${project.geography || 'N/A'}\n`;
+      summary += `**Target Roles:** ${project.target_roles || 'N/A'}\n`;
+      summary += `**Sales Motion:** ${project.sales_motion || 'N/A'}\n`;
+      summary += `**Current Stage:** ${project.current_stage || 'N/A'}\n`;
+      summary += `**Blocking Problem:** ${project.blocking_problem || 'N/A'}\n\n`;
+      
+      summary += `## Statistics\n`;
+      summary += `- Total Assets: ${project.assets?.length || 0}\n`;
+      summary += `- Total Leads: ${project.leads?.length || 0}\n`;
+      
+      zip.file('SUMMARY.md', summary);
+
+      // 2. Assets Folder
+      if (project.assets && project.assets.length > 0) {
+        const assetsFolder = zip.folder('Assets');
+        project.assets.forEach((asset: any) => {
+          assetsFolder?.file(`${asset.type}.md`, asset.content || '');
+        });
+      }
+
+      // 3. Leads Folder (CSV)
+      if (project.leads && project.leads.length > 0) {
+        const leadsFolder = zip.folder('Leads');
+        let csvContent = 'Company Name,Contact Name,Role,Email,Value,Status,Notes\n';
+        project.leads.forEach((lead: any) => {
+          const escapeCsv = (str: string) => `"${(str || '').replace(/"/g, '""')}"`;
+          csvContent += `${escapeCsv(lead.company_name)},${escapeCsv(lead.contact_name)},${escapeCsv(lead.role)},${escapeCsv(lead.email)},${escapeCsv(lead.value)},${escapeCsv(lead.status)},${escapeCsv(lead.notes)}\n`;
+        });
+        leadsFolder?.file('leads.csv', csvContent);
+      }
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, `${project.name.replace(/\s+/g, '_')}_export.zip`);
+      toast.success('Project data exported successfully!');
+    } catch (error) {
+      console.error('Export failed', error);
+      toast.error('Failed to export project data');
+    }
+  };
+
   if (loading) return (
     <div className="flex justify-center items-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
     </div>
   );
   if (!project) return <div>Project not found</div>;
 
-  const tabs = [
-    { id: 'questionnaire', name: 'Project Details', icon: Settings },
-    { id: 'assets', name: 'Sales Assets', icon: FileText },
-    { id: 'pipeline', name: 'Pipeline', icon: LayoutDashboard },
-  ];
-
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col">
-      <header className="bg-white border-b border-gray-200 shrink-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="py-4">
-            <div className="flex items-center gap-4 mb-4">
-              <Link to="/dashboard" className="text-gray-400 hover:text-gray-600 transition-colors">
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900 truncate">{project.name}</h1>
-            </div>
-            
-            <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`
-                      whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors
-                      ${activeTab === tab.id
-                        ? 'border-indigo-500 text-indigo-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }
-                    `}
-                  >
-                    <Icon className={`h-4 w-4 ${activeTab === tab.id ? 'text-indigo-600' : 'text-gray-400'}`} />
-                    {tab.name}
-                  </button>
-                );
-              })}
-            </nav>
+    <div className="p-8 max-w-7xl mx-auto">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div className="flex items-center gap-4">
+          <Link to="/dashboard" className="w-10 h-10 rounded-full bg-surface-container-low border border-outline-variant/20 flex items-center justify-center text-on-surface-variant hover:text-white hover:border-outline-variant/50 transition-all">
+            <span className="material-symbols-outlined text-[20px]" data-icon="arrow_back">arrow_back</span>
+          </Link>
+          <div>
+            <h1 className="text-3xl font-headline font-bold text-white tracking-tight">{project.name}</h1>
+            <p className="text-on-surface-variant mt-1">Configure your AI parameters and generate assets.</p>
           </div>
         </div>
-      </header>
-
-      <main className="flex-1 overflow-y-auto bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {activeTab === 'questionnaire' && (
-            <Questionnaire project={project} onUpdate={handleUpdateProject} onGenerate={handleGenerate} />
-          )}
-          {activeTab === 'assets' && (
-            <AssetsView project={project} />
-          )}
-          {activeTab === 'pipeline' && (
-            <KanbanBoard project={project} />
-          )}
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleExport}
+            className="flex items-center gap-2 bg-surface-container-low border border-outline-variant/30 text-white px-4 py-2 rounded-md font-medium text-sm hover:bg-surface-container transition-all"
+          >
+            <span className="material-symbols-outlined text-[18px]" data-icon="download">download</span>
+            Export Assets
+          </button>
         </div>
-      </main>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-8 border-b border-outline-variant/20 mb-8">
+        <button 
+          onClick={() => setActiveTab('questionnaire')}
+          className={`pb-4 text-sm font-medium transition-colors ${activeTab === 'questionnaire' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-white'}`}
+        >
+          Setup & Context
+        </button>
+        <button 
+          onClick={() => setActiveTab('assets')}
+          className={`pb-4 text-sm font-medium transition-colors ${activeTab === 'assets' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-white'}`}
+        >
+          Generated Assets
+        </button>
+        <button 
+          onClick={() => setActiveTab('pipeline')}
+          className={`pb-4 text-sm font-medium transition-colors ${activeTab === 'pipeline' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-white'}`}
+        >
+          Pipeline
+        </button>
+      </div>
+
+      <div>
+        {activeTab === 'questionnaire' && (
+          <Questionnaire project={project} onUpdate={handleUpdateProject} onGenerate={handleGenerate} />
+        )}
+        {activeTab === 'assets' && (
+          <AssetsView project={project} />
+        )}
+        {activeTab === 'pipeline' && (
+          <KanbanBoard project={project} />
+        )}
+      </div>
     </div>
   );
 }

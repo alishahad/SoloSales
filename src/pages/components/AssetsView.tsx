@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { fetchApi } from '../../api';
-import { Copy, Download, Edit2, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Asset {
@@ -90,81 +89,86 @@ export default function AssetsView({ project }: AssetsViewProps) {
 
   if (loading) return (
     <div className="flex justify-center items-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
     </div>
   );
 
   if (assets.length === 0) {
     return (
-      <div className="text-center py-16 bg-white rounded-xl border border-gray-200 shadow-sm">
-        <h3 className="mt-2 text-sm font-semibold text-gray-900">No assets generated yet</h3>
-        <p className="mt-1 text-sm text-gray-500">Go back to the Project Details tab and click "Generate Assets".</p>
+      <div className="text-center py-16 bg-surface-container-lowest rounded-xl border border-outline-variant/10">
+        <div className="mx-auto h-12 w-12 bg-primary-container/10 rounded-full flex items-center justify-center mb-4">
+          <span className="material-symbols-outlined text-primary" data-icon="description">description</span>
+        </div>
+        <h3 className="mt-2 text-sm font-semibold text-white">No assets generated yet</h3>
+        <p className="mt-1 text-sm text-on-surface-variant max-w-sm mx-auto">
+          Go back to the Setup & Context tab and click "Generate Assets".
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       {assets.map((asset) => (
-        <div key={asset.id} className="bg-white overflow-hidden shadow-sm rounded-xl border border-gray-200 flex flex-col h-[500px]">
-          <div className="px-4 py-4 sm:px-6 flex justify-between items-center border-b border-gray-200 bg-gray-50 shrink-0">
-            <h3 className="text-base font-semibold text-gray-900">
+        <div key={asset.id} className="bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden flex flex-col h-[500px]">
+          <div className="px-6 py-4 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest shrink-0">
+            <h3 className="text-base font-bold text-white">
               {ASSET_LABELS[asset.type] || asset.type}
             </h3>
-            <div className="flex space-x-1">
+            <div className="flex gap-2">
               {editingId === asset.id ? (
                 <>
                   <button
                     onClick={() => saveEdit(asset.id)}
-                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-md transition-colors"
+                    className="w-8 h-8 rounded-md bg-tertiary/20 flex items-center justify-center text-tertiary hover:bg-tertiary/30 transition-all"
                     title="Save changes"
                   >
-                    <Check className="h-4 w-4" />
+                    <span className="material-symbols-outlined text-[16px]" data-icon="check">check</span>
                   </button>
                   <button
                     onClick={cancelEditing}
-                    className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                    className="w-8 h-8 rounded-md bg-error/20 flex items-center justify-center text-error hover:bg-error/30 transition-all"
                     title="Cancel editing"
                   >
-                    <X className="h-4 w-4" />
+                    <span className="material-symbols-outlined text-[16px]" data-icon="close">close</span>
                   </button>
                 </>
               ) : (
                 <>
                   <button
                     onClick={() => startEditing(asset)}
-                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                    className="w-8 h-8 rounded-md bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-all"
                     title="Edit content"
                   >
-                    <Edit2 className="h-4 w-4" />
+                    <span className="material-symbols-outlined text-[16px]" data-icon="edit">edit</span>
                   </button>
                   <button
                     onClick={() => handleCopy(asset.content)}
-                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                    className="w-8 h-8 rounded-md bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-all"
                     title="Copy to clipboard"
                   >
-                    <Copy className="h-4 w-4" />
+                    <span className="material-symbols-outlined text-[16px]" data-icon="content_copy">content_copy</span>
                   </button>
                   <button
                     onClick={() => handleDownload(asset.type, asset.content)}
-                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                    className="w-8 h-8 rounded-md bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-all"
                     title="Download Markdown"
                   >
-                    <Download className="h-4 w-4" />
+                    <span className="material-symbols-outlined text-[16px]" data-icon="download">download</span>
                   </button>
                 </>
               )}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
             {editingId === asset.id ? (
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full h-full min-h-[300px] p-4 border border-indigo-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm resize-none"
+                className="w-full h-full min-h-[300px] p-4 bg-surface-container border border-primary/50 text-white rounded-md focus:outline-none focus:ring-1 focus:ring-primary font-mono text-sm resize-none"
               />
             ) : (
-              <div className="prose prose-sm prose-indigo max-w-none">
+              <div className="prose prose-invert prose-sm max-w-none">
                 <ReactMarkdown>{asset.content}</ReactMarkdown>
               </div>
             )}

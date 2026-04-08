@@ -5,6 +5,8 @@ interface User {
   id: number;
   email: string;
   onboarding_completed: number;
+  is_admin: number;
+  plan: string;
 }
 
 interface AuthContextType {
